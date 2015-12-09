@@ -1,0 +1,5 @@
+source https://www.nuget.org/api/v2/
+framework >= net461
+nuget SQLProvider 0.0.9-alpha
+nuget System.Data.SQLite
+nuget FSharpx.Extras

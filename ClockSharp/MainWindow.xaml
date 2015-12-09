@@ -1,0 +1,28 @@
+<Window
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ClockSharp" Height="450" Width="500">
+   <Window.Resources>
+      <ResourceDictionary Source="ApplicationResources.xaml" />
+   </Window.Resources>
+   <Grid Margin="10,10,10,10" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+      <Grid.Background>
+         <ImageBrush ImageSource="watermark.png"  />
+      </Grid.Background>
+      <Grid.ColumnDefinitions>
+         <ColumnDefinition />
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+         <RowDefinition Height="auto"/>
+         <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <Label Grid.Row="0" Style="{StaticResource headerTextStyle}" Content="Clock In/Out" HorizontalAlignment="Stretch" VerticalAlignment="Top"/>
+      <ListView Grid.Row="1" x:Name="listView" Margin="0,0,0,0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+         <ListView.View>
+            <GridView>
+               <GridViewColumn/>
+            </GridView>
+         </ListView.View>
+      </ListView>
+   </Grid>
+</Window>
