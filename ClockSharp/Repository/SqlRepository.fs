@@ -1,10 +1,9 @@
 ﻿module private ClockSharp.HoursRepository.Sql
 
-open System
 open FSharp.Data.Sql
 open System.Data.SQLite
 open System.Linq
-open ClockSharp.HoursRepository
+open ClockSharp.HoursRepository.Interface
 open ClockSharp.Model
 
 [<Literal>]
@@ -15,14 +14,14 @@ let SqlLiteDllPath = __SOURCE_DIRECTORY__ + @"\..\..\packages\SQLProvider\docs\s
 
 type HoursDatabase = SqlDataProvider< ConnectionString=ConnectionString, ResolutionPath=SqlLiteDllPath, DatabaseVendor=Common.DatabaseProviderTypes.SQLITE >
 
-let private DbRecordToTimeRecord = function 
+let private dbRecordToTimeRecord = function 
    | (day, start, finish) -> 
-      { Date = AsDate day
-        Start = AsTimePoint start
-        Finish = AsTimePoint finish }
-let private TimeRecordToDbRecord r = (DateToDateTime r.Date, TimePointToDateTime r.Start, TimePointToDateTime r.Finish)
+      { Date = DateTimeToDate day
+        Start = DateTimeToTimePoint start
+        Finish = DateTimeToTimePoint finish }
+let private timeRecordToDbRecord r = (DateToDateTime r.Date, TimePointToDateTime r.Start, TimePointToDateTime r.Finish)
 
-let private CreateRecord (ctx : HoursDatabase.dataContext) (r : TimeRecord) : HoursDatabase.dataContext.``[main].[hours]Entity`` = 
+let private createRecord (ctx : HoursDatabase.dataContext) (r : TimeRecord) : HoursDatabase.dataContext.``[main].[hours]Entity`` = 
    let record = ctx.``[main].[hours]``.Create()
    record.Day <- DateToDateTime r.Date
    record.Start <- TimePointToDateTime r.Start
@@ -41,11 +40,11 @@ type SqlHoursRepository(path : string) =
             for r in ctx.``[main].[hours]`` do
                select (r.Day, r.Start, r.Finish)
          }
-         |> Seq.map DbRecordToTimeRecord
+         |> Seq.map dbRecordToTimeRecord
       
       member this.Update newTimesForDay = 
          try 
-            let (dayToUpdate, newStart, newFinish) = TimeRecordToDbRecord newTimesForDay
+            let (dayToUpdate, newStart, newFinish) = timeRecordToDbRecord newTimesForDay
             
             let recordsToUpdate = 
                query { 
@@ -62,7 +61,7 @@ type SqlHoursRepository(path : string) =
                ctx.SubmitUpdates()
                Some(this :> IHoursRepository)
             | 0 -> 
-               let newRecord = CreateRecord ctx newTimesForDay
+               let newRecord = createRecord ctx newTimesForDay
                ctx.SubmitUpdates()
                Some(this :> IHoursRepository)
             | _ -> None
@@ -72,7 +71,7 @@ type SqlHoursRepository(path : string) =
          try 
             let newRecords = 
                times
-               |> Seq.map (CreateRecord ctx)
+               |> Seq.map (createRecord ctx)
                |> Seq.toList
             ctx.SubmitUpdates()
             Some(this :> IHoursRepository)
@@ -83,7 +82,7 @@ let Load(path : string) : IHoursRepository option =
       let repo = SqlHoursRepository(path)
       repo.RecordCount |> ignore // To trigger an exception...
       Some(repo :> IHoursRepository)
-   with :? SQLiteException -> None
+   with _ -> None
 
 let Create path = 
    try 

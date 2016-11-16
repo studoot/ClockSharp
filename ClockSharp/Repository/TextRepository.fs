@@ -1,13 +1,13 @@
 ﻿module private ClockSharp.HoursRepository.Text
 
+open ClockSharp.HoursRepository.Interface
+open ClockSharp.Model
+open FSharpx
+open FSharpx.Option
 open System
 open System.Globalization
 open System.IO
 open System.Text
-open FSharpx
-open FSharpx.Option
-open ClockSharp.HoursRepository
-open ClockSharp.Model
 
 let private recordLength = 30
 
@@ -22,20 +22,20 @@ let private startOf (record : string) = DateTime.ParseExact(record.Substring(17,
 let private finishOf (record : string) = DateTime.ParseExact(record.Substring(23, 5), "HH:mm")
 
 let private toTimeRecord d s f = 
-   { Date = AsDate d
-     Start = AsTimePoint s
-     Finish = AsTimePoint f }
+   { Date = DateTimeToDate d
+     Start = DateTimeToTimePoint s
+     Finish = DateTimeToTimePoint f }
 
-let private TimeRecordFrom record = toTimeRecord <!> dateOf record <*> startOf record <*> finishOf record
+let private timeRecordFrom record = toTimeRecord <!> dateOf record <*> startOf record <*> finishOf record
 
-let ReadRecord(f : FileStream) : TimeRecord option = 
+let ReadRecord(s : Stream) : TimeRecord option = 
    try 
       let buffer : byte [] = Array.zeroCreate recordLength
-      if recordLength = f.Read(buffer, 0, recordLength) then TimeRecordFrom <| Encoding.ASCII.GetString buffer
+      if recordLength = s.Read(buffer, 0, recordLength) then Encoding.ASCII.GetString buffer |> timeRecordFrom
       else None
    with _ -> None
 
-let WriteRecord (f : FileStream) (r : TimeRecord) : bool = 
+let WriteRecord (s : Stream) (r : TimeRecord) : bool = 
    try 
       let day = (DateToDateTime r.Date).ToString("ddd, dd-MMM-yyyy")
       let start = (TimePointToDateTime r.Start).ToString("HH:mm")
@@ -43,7 +43,7 @@ let WriteRecord (f : FileStream) (r : TimeRecord) : bool =
       let newRecord = sprintf "%16s %5s %5s\x0d\x0a" day start finish
       let recordBytes = Encoding.ASCII.GetBytes newRecord
       if recordBytes.Length = recordLength then 
-         f.Write(recordBytes, 0, recordLength)
+         s.Write(recordBytes, 0, recordLength)
          true
       else false
    with _ -> false
@@ -51,22 +51,26 @@ let WriteRecord (f : FileStream) (r : TimeRecord) : bool =
 type TextHoursRepository(path : string) = 
    let f = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read)
    
+   member this.Records = lazy (this.LoadRecords() |> getOrElse Seq.empty)
+
    member this.LoadRecords() = 
       try 
-         File.ReadLines(path)
-         |> Seq.map TimeRecordFrom
+         f.Position <- int64 0
+         let reader = new StreamReader(f)
+         Seq.unfold (fun (reader : StreamReader) -> 
+            if (reader.EndOfStream) then None
+            else Some(reader.ReadLine(), reader)) reader
+         |> Seq.map timeRecordFrom
          |> Seq.toList
          |> Option.sequence
          |> Option.map Seq.ofList
-      with _ -> None
+      with e -> None
    
    interface IDisposable with
-      member this.Dispose() = 
-         f.Dispose()
-         ()
+      member this.Dispose() = f.Dispose()
    
    interface IHoursRepository with
-      member this.GetTimeRecords() = this.LoadRecords() |> getOrElse Seq.empty
+      member this.GetTimeRecords() = this.Records.Force()
       
       member this.Update newTimesForDay = 
          try 
