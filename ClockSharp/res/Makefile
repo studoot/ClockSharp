@@ -1,8 +1,10 @@
-all: ClockSharp.res
+RFLAGS = $(RFLAGS) /NOLOGO
+
+build: ClockSharp.res
 
 clean:
 	del /f /q ClockSharp.res
 
-rebuild: clean all
+rebuild: clean build
 
-ClockSharp.res: ClockSharp.rc ClockInOut.ico
+ClockSharp.res: ClockSharp.rc ClockSharp.ico
