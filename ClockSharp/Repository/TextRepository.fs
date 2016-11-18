@@ -17,6 +17,14 @@ type System.DateTime with
       ofBoolAndValue 
          (DateTime.TryParseExact(s, format, CultureInfo.InvariantCulture, DateTimeStyles.None, &value), value)
 
+type System.IO.StreamReader with
+   member this.ReadLines : string seq = 
+      this.BaseStream.Position <- int64 0
+      seq { 
+         while not this.EndOfStream do
+            yield this.ReadLine()
+      }
+
 let private dateOf (record : string) = DateTime.ParseExact(record.Substring(5, 11), "dd-MMM-yyyy")
 let private startOf (record : string) = DateTime.ParseExact(record.Substring(17, 5), "HH:mm")
 let private finishOf (record : string) = DateTime.ParseExact(record.Substring(23, 5), "HH:mm")
@@ -38,8 +46,8 @@ let ReadRecord(s : Stream) : TimeRecord option =
 let WriteRecord (s : Stream) (r : TimeRecord) : bool = 
    try 
       let day = (DateToDateTime r.Date).ToString("ddd, dd-MMM-yyyy")
-      let start = (TimePointToDateTime r.Start).ToString("HH:mm")
-      let finish = (TimePointToDateTime r.Finish).ToString("HH:mm")
+      let start = (TimePointToTimeSpan r.Start).ToString(@"hh\:mm")
+      let finish = (TimePointToTimeSpan r.Finish).ToString(@"hh\:mm")
       let newRecord = sprintf "%16s %5s %5s\x0d\x0a" day start finish
       let recordBytes = Encoding.ASCII.GetBytes newRecord
       if recordBytes.Length = recordLength then 
@@ -48,38 +56,27 @@ let WriteRecord (s : Stream) (r : TimeRecord) : bool =
       else false
    with _ -> false
 
-type TextHoursRepository(path : string) = 
-   let f = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read)
-   
-   member this.Records = lazy (this.LoadRecords() |> getOrElse Seq.empty)
+let LoadRecords(s : Stream) = 
+   try 
+      (new StreamReader(s)).ReadLines
+      |> Seq.map timeRecordFrom
+      |> Seq.toList
+      |> Option.sequence
+      |> Option.map Seq.ofList
+   with e -> None
 
-   member this.LoadRecords() = 
-      try 
-         f.Position <- int64 0
-         let reader = new StreamReader(f)
-         Seq.unfold (fun (reader : StreamReader) -> 
-            if (reader.EndOfStream) then None
-            else Some(reader.ReadLine(), reader)) reader
-         |> Seq.map timeRecordFrom
-         |> Seq.toList
-         |> Option.sequence
-         |> Option.map Seq.ofList
-      with e -> None
+type TextHoursRepository(s : Stream) = 
+   let recordsConstructor = fun () -> LoadRecords s |> getOrElse Seq.empty
+   let resetRecords = fun () -> Lazy.Create recordsConstructor
+   let mutable records: Lazy<TimeRecords> = resetRecords()
+   new(path : string) = 
+      new TextHoursRepository(new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read))
    
    interface IDisposable with
-      member this.Dispose() = f.Dispose()
+      member this.Dispose() = s.Dispose()
    
    interface IHoursRepository with
-      member this.GetTimeRecords() = this.Records.Force()
-      
-      member this.Update newTimesForDay = 
-         try 
-            let existingRecords = (this :> IHoursRepository).GetTimeRecords()
-            let recordIndex = Seq.findIndex (fun r -> r.Date = newTimesForDay.Date) existingRecords
-            f.Position <- int64 recordLength * int64 recordIndex
-            WriteRecord f newTimesForDay |> ignore
-            Some(this :> IHoursRepository)
-         with _ -> Some(this :> IHoursRepository)
+      member this.GetTimeRecords() = records.Force()
       
       member this.Insert newRecords = 
          let existingRecords = (this :> IHoursRepository).GetTimeRecords()
@@ -87,11 +84,29 @@ type TextHoursRepository(path : string) =
          let distinctRecordCount = Seq.distinctBy (fun r -> r.Date) allRecords |> Seq.length
          if distinctRecordCount = Seq.length allRecords then 
             let sortedRecords = Seq.sortBy (fun r -> r.Date) allRecords
-            f.Position <- 0L
-            Seq.map (WriteRecord f) sortedRecords |> ignore
-            Some(this :> IHoursRepository)
-         else Some(this :> IHoursRepository)
+            s.Position <- 0L
+            Seq.forall (WriteRecord s) sortedRecords |> ignore
+            s.Flush()
+            records <- resetRecords()
+         this :> IHoursRepository |> Some
+      
+      member this.Update (d : Date) (t : TimePoint) = 
+         try 
+            let existingRecords = (this :> IHoursRepository).GetTimeRecords()
+            let recordIndex = Seq.findIndex (fun r -> r.Date = d) existingRecords
+            s.Position <- int64 recordLength * int64 recordIndex
+            match ReadRecord s with
+            | Some record ->
+               let newRecord = { record with Finish = t }
+               s.Position <- int64 recordLength * int64 recordIndex
+               WriteRecord s newRecord |> ignore
+               s.Flush()
+            | _ -> ()
+            records <- resetRecords()
+            this :> IHoursRepository |> Some
+         with _ -> (this :> IHoursRepository).Insert [{ Date = d
+                                                        Start = t
+                                                        Finish = t }
+ ]
 
-let Load path = 
-   let repo = new TextHoursRepository(path)
-   repo.LoadRecords() |> Option.map (fun _ -> repo :> IHoursRepository)
+let Load(path : string) = new TextHoursRepository(path) :> IHoursRepository |> Some

@@ -1,10 +1,10 @@
 ﻿module private ClockSharp.HoursRepository.Sql
 
+open ClockSharp.HoursRepository.Interface
+open ClockSharp.Model
 open FSharp.Data.Sql
 open System.Data.SQLite
 open System.Linq
-open ClockSharp.HoursRepository.Interface
-open ClockSharp.Model
 
 [<Literal>]
 let ConnectionString = "Data Source = " + __SOURCE_DIRECTORY__ + @"\..\empty.db ;Version=3"
@@ -14,18 +14,18 @@ let SqlLiteDllPath = __SOURCE_DIRECTORY__ + @"\..\..\packages\SQLProvider\docs\s
 
 type HoursDatabase = SqlDataProvider< ConnectionString=ConnectionString, ResolutionPath=SqlLiteDllPath, DatabaseVendor=Common.DatabaseProviderTypes.SQLITE >
 
-let private dbRecordToTimeRecord = function 
+let dbRecordToTimeRecord = function 
    | (day, start, finish) -> 
       { Date = DateTimeToDate day
         Start = DateTimeToTimePoint start
         Finish = DateTimeToTimePoint finish }
-let private timeRecordToDbRecord r = (DateToDateTime r.Date, TimePointToDateTime r.Start, TimePointToDateTime r.Finish)
+let timeRecordToDbRecord r = (DateToDateTime r.Date, TimePointToDateTime r.Date r.Start, TimePointToDateTime r.Date r.Finish)
 
-let private createRecord (ctx : HoursDatabase.dataContext) (r : TimeRecord) : HoursDatabase.dataContext.``[main].[hours]Entity`` = 
+let createRecord (ctx : HoursDatabase.dataContext) (r : TimeRecord) : HoursDatabase.dataContext.``[main].[hours]Entity`` = 
    let record = ctx.``[main].[hours]``.Create()
    record.Day <- DateToDateTime r.Date
-   record.Start <- TimePointToDateTime r.Start
-   record.Finish <- TimePointToDateTime r.Finish
+   record.Start <- TimePointToDateTime r.Date r.Start
+   record.Finish <- TimePointToDateTime r.Date r.Finish
    record
 
 type SqlHoursRepository(path : string) = 
@@ -42,11 +42,10 @@ type SqlHoursRepository(path : string) =
          }
          |> Seq.map dbRecordToTimeRecord
       
-      member this.Update newTimesForDay = 
+      member this.Update (d : Date) (t : TimePoint) = 
          try 
-            let (dayToUpdate, newStart, newFinish) = timeRecordToDbRecord newTimesForDay
-            
             let recordsToUpdate = 
+               let dayToUpdate = DateToDateTime d
                query { 
                   for r in ctx.``[main].[hours]`` do
                      where (r.Day = dayToUpdate)
@@ -54,20 +53,21 @@ type SqlHoursRepository(path : string) =
                }
             match recordsToUpdate.Count() with
             | 1 -> 
-               let updatedRecords = 
-                  recordsToUpdate |> Seq.map (fun r -> 
-                                        r.Start <- newStart
-                                        r.Finish <- newFinish)
+               let updateTime = TimePointToDateTime d t
+               let updatedRecords = recordsToUpdate |> Seq.map (fun r -> r.Finish <- updateTime)
                ctx.SubmitUpdates()
                Some(this :> IHoursRepository)
             | 0 -> 
-               let newRecord = createRecord ctx newTimesForDay
+               let newRecord = 
+                  createRecord ctx { Date = d
+                                     Start = t
+                                     Finish = t }
                ctx.SubmitUpdates()
                Some(this :> IHoursRepository)
             | _ -> None
          with _ -> None
       
-      member this.Insert(times : TimeRecords) = 
+      member this.Insert times = 
          try 
             let newRecords = 
                times
