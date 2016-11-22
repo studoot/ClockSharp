@@ -37,11 +37,6 @@ type Hours() as self =
         Hours = TimeSpan(0, minutesWorked, 0)
         Overtime = TimeSpan(0, overtimeMinutesWorked, 0) }
    
-   let timerUpdateAction (event : EventArgs) = 
-      let now = DateTime.Now
-      if now.Second = 0 then self.UpdateFor now
-      else ()
-   
    let updateTimer = new DispatcherTimer(DispatcherPriority.Input)
    
    let updateRepository instant = 
@@ -51,9 +46,14 @@ type Hours() as self =
          true
       | _ -> false
    
+   let hoursUpdater = 
+      updateTimer.Tick
+      |> Observable.map (fun _ -> DateTime.Now)
+      |> Observable.filter (fun instant -> instant.Second = 0)
+      |> Observable.subscribe self.UpdateFor
+   
    do 
       updateTimer.Interval <- TimeSpan.FromMilliseconds(500.0)
-      updateTimer.Tick.Add timerUpdateAction
       updateTimer.IsEnabled <- true
    
    member x.Repository 
@@ -64,7 +64,7 @@ type Hours() as self =
          x.OnPropertyChanged "Hours"
    
    member x.Hours = 
-      let startDate = DateTimeToDate <| DateTime.Now.AddDays(-7.0)
+      let startDate = DateTime.Now.AddDays(-7.0) |> DateTimeToDate
       
       let foundRecords = 
          repo.GetTimeRecords()
